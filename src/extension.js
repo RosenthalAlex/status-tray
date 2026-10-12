@@ -61,6 +61,10 @@ const OVERFLOW_PREVIEW_STACK_ICON_SIZE = 13;
 // larger than its glyph, inset by half that to stay centred.
 const OVERFLOW_PREVIEW_HALO_MARGIN = 4;
 const OVERFLOW_PREVIEW_HALO_INSET = 2;
+// Icon strip: how long it takes to slide out or scroll to an icon, and how
+// much of an icon slot peeks out, fading, at an edge with more icons past it.
+const STRIP_ANIMATION_TIME = 200;
+const STRIP_PEEK_FRACTION = 0.5;
 
 function debug(msg) {
     if (DEBUG) {
@@ -2358,6 +2362,354 @@ class OverflowButton extends PanelMenu.Button {
     }
 });
 
+/**
+ * The scrolling part of the icon strip. It shows overflow-strip-width icons;
+ * the rest scroll, and wherever more icons lie past an edge, part of the next
+ * one peeks out there, fading.
+ */
+const IconStripView = GObject.registerClass(
+class IconStripView extends St.ScrollView {
+    _init(settings) {
+        super._init({
+            style_class: 'status-tray-strip',
+            hscrollbar_policy: St.PolicyType.EXTERNAL,
+            vscrollbar_policy: St.PolicyType.NEVER,
+            x_expand: false,
+            y_expand: true,
+            child: new St.BoxLayout({ y_expand: true }),
+        });
+
+        this._settings = settings;
+        this._fadeOffset = 0;
+    }
+
+    setFadeOffset(offset) {
+        if (offset === this._fadeOffset)
+            return;
+        this._fadeOffset = offset;
+        this.set_style(`-st-hfade-offset: ${offset}px;`);
+    }
+
+    vfunc_get_preferred_width(forHeight) {
+        const [, natural] = super.vfunc_get_preferred_width(forHeight);
+
+        // Slots are as wide as the widest icon, so the cap follows the icon
+        // size and padding settings.
+        let slot = 0;
+        for (const child of this.child.get_children()) {
+            if (child.visible)
+                slot = Math.max(slot, child.get_preferred_width(-1)[1]);
+        }
+        // With more icons than fit, part of the next one peeks out at the
+        // edge, cut off and faded, to show the strip scrolls. Rounded, as a
+        // fractional width would leave the actors beside it on half pixels.
+        const count = Math.max(1, this._settings.get_int('overflow-strip-width'));
+        const width = Math.min(natural,
+            Math.round(slot * (count + STRIP_PEEK_FRACTION)));
+
+        // A crowded panel can squeeze the strip down to one icon. The rest
+        // still scroll.
+        return [Math.min(width, slot), width];
+    }
+
+    vfunc_scroll_event(event) {
+        // Wheels mostly scroll vertically, and the strip only moves sideways,
+        // so either axis moves it. Emulated steps repeat a smooth scroll that
+        // has already been handled.
+        if (event.get_flags() & Clutter.EventFlags.POINTER_EMULATED)
+            return Clutter.EVENT_STOP;
+
+        const adjustment = this.hadjustment;
+        adjustment.remove_transition('value');
+        switch (event.get_scroll_direction()) {
+        case Clutter.ScrollDirection.SMOOTH: {
+            const [dx, dy] = event.get_scroll_delta();
+            adjustment.adjust_for_scroll_event(dx + dy);
+            break;
+        }
+        case Clutter.ScrollDirection.UP:
+        case Clutter.ScrollDirection.LEFT:
+            adjustment.adjust_for_scroll_event(-1);
+            break;
+        case Clutter.ScrollDirection.DOWN:
+        case Clutter.ScrollDirection.RIGHT:
+            adjustment.adjust_for_scroll_event(1);
+            break;
+        }
+        return Clutter.EVENT_STOP;
+    }
+
+    // A press on an icon partly hidden at an edge scrolls it into view instead
+    // of reaching the icon.
+    vfunc_captured_event(event) {
+        if (event.type() !== Clutter.EventType.BUTTON_PRESS)
+            return Clutter.EVENT_PROPAGATE;
+
+        const [x] = event.get_coords();
+        for (const child of this.child.get_children()) {
+            const [left] = child.get_transformed_position();
+            const [width] = child.get_transformed_size();
+            if (x >= left && x < left + width) {
+                return this.scrollToChild(child, true)
+                    ? Clutter.EVENT_STOP
+                    : Clutter.EVENT_PROPAGATE;
+            }
+        }
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    // Scrolls `child` clear of the edge fades, easing there if `animate`.
+    // Returns whether it had to move.
+    scrollToChild(child, animate) {
+        const adjustment = this.hadjustment;
+        const { value, lower, upper } = adjustment;
+        const pageSize = adjustment.page_size;
+        const { x1, x2 } = child.get_allocation_box();
+        // Fades wider than the room beside the icon would push it back and
+        // forth on every click, so on a narrow strip they give way.
+        const margin = Math.min(this._fadeOffset,
+            Math.max(0, (pageSize - (x2 - x1)) / 2));
+
+        let target = value;
+        if (x1 < value + margin)
+            target = x1 - margin;
+        else if (x2 > value + pageSize - margin)
+            target = x2 - pageSize + margin;
+        target = Math.max(lower, Math.min(target, upper - pageSize));
+        if (Math.abs(target - value) < 1)
+            return false;
+
+        adjustment.remove_transition('value');
+        if (animate) {
+            adjustment.ease(target, {
+                duration: STRIP_ANIMATION_TIME,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+        } else {
+            adjustment.value = target;
+        }
+        return true;
+    }
+
+    // Opens or shuts the strip, sliding it by easing its width.
+    slide(open, animate) {
+        if (!animate) {
+            this.remove_transition('width');
+            this.set_width(-1);
+            this.visible = open;
+            return;
+        }
+
+        if (open) {
+            // Asked directly: a fixed width left by an unfinished slide would
+            // otherwise answer for the natural one.
+            const [, natural] = this.vfunc_get_preferred_width(-1);
+            if (!this.visible) {
+                this.set_width(0);
+                this.show();
+            }
+            this.ease({
+                width: natural,
+                duration: STRIP_ANIMATION_TIME,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => this.set_width(-1),
+            });
+        } else if (this.visible) {
+            this.ease({
+                width: 0,
+                duration: STRIP_ANIMATION_TIME,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    this.hide();
+                    this.set_width(-1);
+                },
+            });
+        }
+    }
+});
+
+/**
+ * The 'strip' overflow mode: a chevron button that slides a scrolling strip of
+ * tray icons out of the panel beside it, and back again.
+ *
+ * The strip holds the overflowed TrayItems themselves, moved out of the panel
+ * box, so each keeps its own clicks and menu. Only this class moves them,
+ * which keeps the 'menu' mode clear of it. However the button is destroyed,
+ * the icons go back to the panel first: destroying the strip with an icon
+ * still inside would destroy that TrayItem too.
+ */
+const IconStripButton = GObject.registerClass(
+class IconStripButton extends PanelMenu.Button {
+    _init(settings, boxName, expanded) {
+        super._init(0.5, 'StatusTray-Strip', true);
+
+        this._settings = settings;
+        // The strip opens to the right of the chevron. In the right box the
+        // panel pushes the chevron left to make room, so it points that way.
+        this._opensLeft = boxName === 'right';
+        this._expanded = expanded;
+        // The TrayItems in the strip, in order.
+        this._items = [];
+
+        this.add_style_class_name('status-tray-button');
+        _applyIconPadding(this, this._settings);
+
+        this._icon = new St.Icon({ style_class: 'system-status-icon status-tray-icon' });
+        this.add_child(this._icon);
+        this._syncIcon();
+
+        // The extension puts this in the panel box, after the button.
+        this._view = new IconStripView(settings);
+        this._view.visible = expanded;
+
+        // Keyboard focus can move to an icon scrolled out of view, and a menu
+        // opened from it is placed at the next layout, so scroll it in now.
+        global.stage.connectObject('notify::key-focus', () => {
+            const focus = global.stage.get_key_focus();
+            if (!focus)
+                return;
+            const trayItem = this._items.find(t => t.container.contains(focus));
+            if (trayItem)
+                this._view.scrollToChild(trayItem.container, false);
+        }, this);
+
+        this._syncSize();
+    }
+
+    get view() {
+        return this._view;
+    }
+
+    get expanded() {
+        return this._expanded;
+    }
+
+    holds(trayItem) {
+        return this._items.includes(trayItem);
+    }
+
+    vfunc_event(event) {
+        const type = event.type();
+        const activated =
+            type === Clutter.EventType.BUTTON_PRESS ||
+            type === Clutter.EventType.TOUCH_BEGIN ||
+            (type === Clutter.EventType.KEY_PRESS &&
+             [Clutter.KEY_Return, Clutter.KEY_KP_Enter, Clutter.KEY_space]
+                 .includes(event.get_key_symbol()));
+        if (!activated)
+            return Clutter.EVENT_PROPAGATE;
+
+        this.setExpanded(!this._expanded, true);
+        return Clutter.EVENT_STOP;
+    }
+
+    setExpanded(expanded, animate) {
+        this._expanded = expanded;
+        this._syncIcon();
+        if (!expanded) {
+            for (const trayItem of this._items)
+                trayItem.menu.close();
+        }
+        this._view.slide(expanded, animate);
+    }
+
+    // For the toggle-menu shortcut: opens the strip if need be, and the first
+    // icon's menu with it.
+    toggleMenuWithKeyFocus() {
+        const trayItem = this._items.find(t => t.container.visible);
+        if (!trayItem)
+            return;
+        if (!this._expanded)
+            this.setExpanded(true, false);
+        trayItem.toggleMenuWithKeyFocus();
+    }
+
+    // Takes `trayItems` into the strip, in order, and hands any others it
+    // holds back to the panel, just before the chevron. The caller lays the
+    // panel box out again afterwards.
+    setItems(trayItems) {
+        const previous = new Set(this._items);
+        for (const trayItem of this._items) {
+            if (!trayItems.includes(trayItem))
+                this._release(trayItem);
+        }
+
+        // An item not in the panel yet joins on a later call, once it is.
+        this._items = trayItems.filter(t => t.container.get_parent());
+
+        const strip = this._view.child;
+        for (const [index, trayItem] of this._items.entries()) {
+            const container = trayItem.container;
+            if (container.get_parent() !== strip) {
+                container.get_parent().remove_child(container);
+                strip.add_child(container);
+            }
+            if (!previous.has(trayItem))
+                this._watch(trayItem);
+            // Placed in ascending order, so moving one never shifts those
+            // already placed.
+            strip.set_child_at_index(container, index);
+        }
+
+        this._syncSize();
+    }
+
+    refreshPadding() {
+        _applyIconPadding(this, this._settings);
+        this._syncSize();
+    }
+
+    _watch(trayItem) {
+        // The container goes first when a TrayItem is destroyed, before the
+        // extension's own 'destroy' handler can call setItems, which must not
+        // then try to hand the dead container back.
+        trayItem.container.connectObject('destroy', () => {
+            this._items = this._items.filter(t => t !== trayItem);
+        }, this);
+        // Menus switched to by hovering open against an icon that may be
+        // half scrolled out. The menu is placed at the next layout, so
+        // scrolling it in now is in time.
+        trayItem.menu.connectObject('open-state-changed', (_menu, isOpen) => {
+            if (isOpen)
+                this._view.scrollToChild(trayItem.container, false);
+        }, this);
+    }
+
+    _release(trayItem) {
+        const container = trayItem.container;
+        container.disconnectObject(this);
+        trayItem.menu.disconnectObject(this);
+
+        this._view.child.remove_child(container);
+        // No box when the button goes down with it, at shell shutdown.
+        this.container.get_parent()?.insert_child_below(container, this.container);
+    }
+
+    _syncIcon() {
+        const pointsLeft = this._opensLeft !== this._expanded;
+        this._icon.icon_name = pointsLeft ? 'pan-start-symbolic' : 'pan-end-symbolic';
+    }
+
+    // Follows the icon size, padding and strip width settings.
+    _syncSize() {
+        const iconSize = this._settings.get_int('icon-size');
+        this._icon.set_style(`icon-size: ${iconSize}px;`);
+        // The fade covers the part of an icon that peeks out.
+        const slot = iconSize + this._settings.get_int('icon-padding');
+        this._view.setFadeOffset(Math.round(slot * STRIP_PEEK_FRACTION));
+        this._view.queue_relayout();
+    }
+
+    _onDestroy() {
+        global.stage.disconnectObject(this);
+        for (const trayItem of this._items)
+            this._release(trayItem);
+        this._items = [];
+        this._view.destroy();
+        super._onDestroy();
+    }
+});
+
 class StatusNotifierWatcher {
     constructor(extension) {
         this._extension = extension;
@@ -2962,6 +3314,11 @@ export default class StatusTrayExtension extends Extension {
 
         this._reorderTimeoutId = null;
 
+        this._iconStrip = null;
+        // Kept while the strip is torn down and rebuilt, e.g. when the last
+        // overflowed app quits and another starts.
+        this._iconStripExpanded = false;
+
         // Claim the watcher name early, since apps starting alongside the shell
         // may look for it only once. Discovery is async, so nothing reaches
         // _onItemRegistered before enable() returns.
@@ -3028,6 +3385,14 @@ export default class StatusTrayExtension extends Extension {
                 debug('overflow-custom-icon setting changed');
                 this._applyOverflow();
             },
+            'changed::overflow-mode', () => {
+                debug('overflow-mode setting changed');
+                this._applyOverflow();
+            },
+            'changed::overflow-strip-width', () => {
+                debug('overflow-strip-width setting changed');
+                this._applyOverflow();
+            },
             this
         );
 
@@ -3068,10 +3433,8 @@ export default class StatusTrayExtension extends Extension {
         this._settings.disconnectObject(this);
         this._settings = null;
 
-        if (this._overflowButton) {
-            this._overflowButton.destroy();
-            this._overflowButton = null;
-        }
+        this._destroyOverflowButton();
+        this._destroyIconStrip();
 
         for (const [key, item] of this._items) {
             item._destroyedInternally = true;
@@ -3142,12 +3505,7 @@ export default class StatusTrayExtension extends Extension {
         const box = this._panelBox();
         const position = this._calculatePosition(appId, box);
 
-        let areaKey = `StatusTray-${appId}`;
-        let counter = 2;
-        while (Main.panel.statusArea[areaKey]) {
-            areaKey = `StatusTray-${appId}-${counter}`;
-            counter++;
-        }
+        const areaKey = this._freeStatusAreaKey(`StatusTray-${appId}`);
         const boxName = this._panelBoxName();
         const slot = this._managedBase(box) + position;
         Main.panel.addToStatusArea(areaKey, trayItem, slot, boxName);
@@ -3226,6 +3584,8 @@ export default class StatusTrayExtension extends Extension {
             _applyIconPadding(item, this._settings);
         if (this._overflowButton)
             _applyIconPadding(this._overflowButton, this._settings);
+        if (this._iconStrip)
+            this._iconStrip.refreshPadding();
     }
 
     _refreshIcons() {
@@ -3270,19 +3630,35 @@ export default class StatusTrayExtension extends Extension {
         return slashIndex > 0 ? key.substring(0, slashIndex) : key;
     }
 
+    // addToStatusArea throws on a role already in use, as when two items
+    // share an app ID, so later ones take a numbered key.
+    _freeStatusAreaKey(base) {
+        let areaKey = base;
+        let counter = 2;
+        while (Main.panel.statusArea[areaKey]) {
+            areaKey = `${base}-${counter}`;
+            counter++;
+        }
+        return areaKey;
+    }
+
     _keyboardTarget() {
         // _items is kept in panel order by _reorderItems, so the first match is
         // the leftmost icon. With overflow-inline-count at 0 every item is
         // hidden and the loop falls through to the overflow button, which is
-        // then the only visible tray element.
+        // then the only visible tray element. Icons in the icon strip stay
+        // visible while the strip is shut, so they fall through to the strip
+        // button, which opens the strip for them.
         for (const trayItem of this._items.values()) {
             if (trayItem._isPassive)
+                continue;
+            if (this._iconStrip?.holds(trayItem))
                 continue;
             const container = trayItem.container;
             if (container.visible)
                 return trayItem;
         }
-        return this._overflowButton;
+        return this._iconStrip ?? this._overflowButton;
     }
 
     /**
@@ -3344,10 +3720,8 @@ export default class StatusTrayExtension extends Extension {
 
         debug(`Reparenting tray into ${this._panelBoxName()} box`);
 
-        if (this._overflowButton) {
-            this._overflowButton.destroy();
-            this._overflowButton = null;
-        }
+        this._destroyOverflowButton();
+        this._destroyIconStrip();
 
         for (const [, item] of this._items) {
             item._destroyedInternally = true;
@@ -3430,13 +3804,14 @@ export default class StatusTrayExtension extends Extension {
         // Slots are relative to where our block starts: in the left and centre
         // boxes index 0 belongs to the Activities button or the clock, so
         // laying out from a fixed 0 would interleave us with them.
+        // Only items in the box take a slot: icons in the icon strip aren't
+        // in it, and counting them could run past the end of the box.
         const box = this._panelBox();
-        const base = this._managedBase(box);
-        for (let i = 0; i < entries.length; i++) {
-            const { trayItem } = entries[i];
+        let slot = this._managedBase(box);
+        for (const { trayItem } of entries) {
             const container = trayItem.container;
             if (container.get_parent() === box) {
-                box.set_child_at_index(container, base + i);
+                box.set_child_at_index(container, slot++);
             }
         }
 
@@ -3455,7 +3830,9 @@ export default class StatusTrayExtension extends Extension {
      * Apply the "overflow" feature: when enabled and the number of tray items
      * exceeds the user's inline limit, the excess items are hidden in place
      * and an OverflowButton (anchored at the rightmost slot of our tray range)
-     * presents them as submenu rows. Safe to call at any time; idempotent.
+     * presents them as submenu rows. In the 'strip' overflow-mode they go to
+     * the icon strip instead (see _applyIconStrip). Safe to call at any time;
+     * idempotent.
      */
     _applyOverflow() {
         if (!this._settings)
@@ -3487,15 +3864,14 @@ export default class StatusTrayExtension extends Extension {
         };
 
         const tearDown = () => {
-            // Reveal everything we manage; destroy the overflow button.
+            // Reveal everything we manage; destroy the overflow button or the
+            // icon strip.
+            this._destroyIconStrip();
             for (const trayItem of entries) {
                 const container = trayItem.container;
                 container.show();
             }
-            if (this._overflowButton) {
-                this._overflowButton.destroy();
-                this._overflowButton = null;
-            }
+            this._destroyOverflowButton();
         };
 
         if (!enabled || entries.length <= inlineCount) {
@@ -3505,6 +3881,12 @@ export default class StatusTrayExtension extends Extension {
 
         const inline = entries.slice(0, inlineCount);
         const overflowed = entries.slice(inlineCount);
+
+        if (this._settings.get_string('overflow-mode') === 'strip') {
+            this._applyIconStrip(inline, overflowed, box, slotAfterManagedItems);
+            return;
+        }
+        this._destroyIconStrip();
 
         for (const trayItem of inline) {
             const container = trayItem.container;
@@ -3517,12 +3899,7 @@ export default class StatusTrayExtension extends Extension {
 
         if (!this._overflowButton) {
             this._overflowButton = new OverflowButton(this.path, this._settings);
-            let areaKey = 'StatusTray-Overflow';
-            let counter = 2;
-            while (Main.panel.statusArea[areaKey]) {
-                areaKey = `StatusTray-Overflow-${counter}`;
-                counter++;
-            }
+            const areaKey = this._freeStatusAreaKey('StatusTray-Overflow');
             this._overflowAreaKey = areaKey;
             Main.panel.addToStatusArea(areaKey, this._overflowButton, slotAfterManagedItems(), this._panelBoxName());
         } else {
@@ -3538,5 +3915,70 @@ export default class StatusTrayExtension extends Extension {
         }
 
         this._overflowButton.setOverflowedItems(overflowed);
+    }
+
+    /**
+     * The 'strip' overflow-mode. The overflowed items leave the panel box for
+     * the strip of an IconStripButton, which sits after the inline items.
+     * The 'menu' mode never comes here, so it never moves an item out of the
+     * box.
+     *
+     * @param {TrayItem[]} inline
+     * @param {TrayItem[]} overflowed
+     * @param {St.BoxLayout} box
+     * @param {Function} slotAfterManagedItems
+     */
+    _applyIconStrip(inline, overflowed, box, slotAfterManagedItems) {
+        this._destroyOverflowButton();
+
+        // The 'menu' mode hides its overflowed items in place.
+        for (const trayItem of [...inline, ...overflowed]) {
+            const container = trayItem.container;
+            container.show();
+        }
+
+        if (!this._iconStrip) {
+            this._iconStrip = new IconStripButton(
+                this._settings, this._panelBoxName(), this._iconStripExpanded);
+            const areaKey = this._freeStatusAreaKey('StatusTray-Strip');
+            Main.panel.addToStatusArea(areaKey, this._iconStrip, slotAfterManagedItems(), this._panelBoxName());
+            box.insert_child_above(this._iconStrip.view, this._iconStrip.container);
+        }
+
+        this._iconStrip.setItems(overflowed);
+
+        // Items going in and out of the strip leave the box out of order, so
+        // lay out our block again: the items still in the box, the chevron,
+        // then the strip. Each goes after the one before it, since moving one
+        // shifts the indices of the rest. The chevron gives the block a start
+        // even when every item is in the strip.
+        const block = [
+            ...[...this._items.values()].map(trayItem => trayItem.container),
+            this._iconStrip.container,
+            this._iconStrip.view,
+        ].filter(actor => actor.get_parent() === box);
+        if (block.length === 0)
+            return;
+        const children = box.get_children();
+        const base = Math.min(...block.map(actor => children.indexOf(actor)));
+        box.set_child_at_index(block[0], base);
+        for (let i = 1; i < block.length; i++)
+            box.set_child_above_sibling(block[i], block[i - 1]);
+    }
+
+    _destroyOverflowButton() {
+        if (!this._overflowButton)
+            return;
+        this._overflowButton.destroy();
+        this._overflowButton = null;
+    }
+
+    /** Destroys the icon strip, which first hands its icons back to the panel. */
+    _destroyIconStrip() {
+        if (!this._iconStrip)
+            return;
+        this._iconStripExpanded = this._iconStrip.expanded;
+        this._iconStrip.destroy();
+        this._iconStrip = null;
     }
 }

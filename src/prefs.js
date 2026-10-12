@@ -46,8 +46,9 @@ const PAGE_MARGINS = 48;
 const GROUP_HEADER_HEIGHT = 57;
 const FIRST_ROW_HEIGHT = 54;
 const ROW_HEIGHT = 55;
-// The tallest fixed page: Behaviour with the custom overflow icon row showing.
-const MIN_PREFS_HEIGHT = 573;
+// The tallest fixed page: Behaviour with the icon menu overflow mode and its
+// custom icon row showing.
+const MIN_PREFS_HEIGHT = 628;
 
 // AdwPreferencesWindow offers no API for adding header bar widgets, so the
 // main menu is packed into its private AdwHeaderBar. There is exactly one.
@@ -1931,6 +1932,23 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         overflowGroup.add(overflowEnabledRow);
 
+        // ComboRow index ↔ stored value. Index order matches the model.
+        const overflowModeValues = ['menu', 'strip'];
+        const overflowModeRow = new Adw.ComboRow({
+            title: 'Mode',
+            subtitle: 'A popup menu, or a strip that slides out in the panel',
+            model: Gtk.StringList.new(['Icon menu', 'Icon strip']),
+            sensitive: overflowEnabledRow.get_active(),
+        });
+        overflowModeRow.set_selected(Math.max(0,
+            overflowModeValues.indexOf(this._settings.get_string('overflow-mode'))));
+        overflowModeRow.connect('notify::selected', () => {
+            this._settings.set_string('overflow-mode',
+                overflowModeValues[overflowModeRow.get_selected()] ?? 'menu');
+            updateOverflowModeRows();
+        });
+        overflowGroup.add(overflowModeRow);
+
         const overflowIconRow = new Adw.ComboRow({
             title: 'Button icon',
             subtitle: 'Standard icon, a live preview, or your own',
@@ -2005,10 +2023,13 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             overflowCustomRow.set_subtitle(value);
         };
 
+        const isIconMenu = () => this._settings.get_string('overflow-mode') !== 'strip';
+
         const updateOverflowCustomVisibility = () => {
             const isCustom =
                 this._settings.get_string('overflow-icon-style') === 'custom';
-            overflowCustomRow.set_visible(overflowEnabledRow.get_active() && isCustom);
+            overflowCustomRow.set_visible(
+                overflowEnabledRow.get_active() && isCustom && isIconMenu());
         };
 
         refreshOverflowCustomPreview();
@@ -2023,6 +2044,31 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
             dialog.connect('icon-selected', () => refreshOverflowCustomPreview());
             dialog.present();
         });
+
+        const overflowStripRow = new Adw.SpinRow({
+            title: 'Strip width',
+            subtitle: 'How many icons the strip shows before it scrolls',
+            adjustment: new Gtk.Adjustment({
+                lower: 1,
+                upper: 20,
+                step_increment: 1,
+                page_increment: 1,
+                value: this._settings.get_int('overflow-strip-width'),
+            }),
+            sensitive: overflowEnabledRow.get_active(),
+        });
+        overflowStripRow.connect('notify::value', () => {
+            this._settings.set_int('overflow-strip-width', overflowStripRow.get_value());
+        });
+        overflowGroup.add(overflowStripRow);
+
+        // The button icon only applies to the icon menu, the width to the strip.
+        const updateOverflowModeRows = () => {
+            overflowIconRow.set_visible(isIconMenu());
+            overflowStripRow.set_visible(!isIconMenu());
+            updateOverflowCustomVisibility();
+        };
+        updateOverflowModeRows();
 
         const overflowCountRow = new Adw.SpinRow({
             title: 'Inline icon limit',
@@ -2041,7 +2087,9 @@ export default class StatusTrayPreferences extends ExtensionPreferences {
         });
         overflowEnabledRow.connect('notify::active', () => {
             overflowCountRow.set_sensitive(overflowEnabledRow.get_active());
+            overflowModeRow.set_sensitive(overflowEnabledRow.get_active());
             overflowIconRow.set_sensitive(overflowEnabledRow.get_active());
+            overflowStripRow.set_sensitive(overflowEnabledRow.get_active());
             updateOverflowCustomVisibility();
         });
         overflowGroup.add(overflowCountRow);

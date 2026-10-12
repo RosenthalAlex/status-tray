@@ -99,7 +99,7 @@
     </key>
 
     <key name="overflow-inline-count" type="i">
-      <default>3</default>
+      <default>0</default>
       <summary>Inline icon count</summary>
       <description>Number of tray items to show directly in the panel before overflowing into the overflow button's menu. Set to 0 to keep every tray item in the overflow menu. Range: 0-20.</description>
     </key>
@@ -120,6 +120,22 @@
       <default>''</default>
       <summary>Custom overflow icon</summary>
       <description>Icon for the overflow button when overflow-icon-style is 'custom'. Either a theme icon name or an absolute file path (a leading '/' selects file mode). When empty or pointing at a missing file, the bundled glyph is used instead.</description>
+    </key>
+
+    <key name="overflow-mode" type="s">
+      <choices>
+        <choice value="menu"/>
+        <choice value="strip"/>
+      </choices>
+      <default>'menu'</default>
+      <summary>Overflow mode</summary>
+      <description>How overflowed tray items are shown. 'menu' lists them in the overflow button's popup menu. 'strip' puts them in a strip beside a chevron button, which slides the strip out in the panel and back again. A strip holding more icons than overflow-strip-width scrolls.</description>
+    </key>
+
+    <key name="overflow-strip-width" type="i">
+      <default>4</default>
+      <summary>Icon strip width</summary>
+      <description>How many icons the strip shows at once when overflow-mode is 'strip'. Any more scroll, with the mouse wheel or by clicking an icon at the strip's edge. Range: 1-20.</description>
     </key>
 
     <key name="panel-dark" type="b">

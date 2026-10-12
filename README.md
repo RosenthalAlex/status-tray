@@ -19,7 +19,7 @@ A GNOME Shell extension that brings back the system tray for applications using 
 - **Keyboard Shortcut** - Optionally open and focus the tray menu without a pointer
 - **Highly Customizable** - Per-app icon overrides, effects, and ordering
 - **Drag & Drop Reordering** - Arrange tray icons in your preferred order
-- **Panel Overflow** - Optionally collapse extra icons into a single overflow button
+- **Panel Overflow** - Optionally collapse extra icons into a menu, or a strip that slides out in the panel
 - **Live Updates** - All changes apply instantly without restart
 
 ## Compatibility
@@ -152,17 +152,31 @@ Override any app's icon with a system icon or custom image:
 ### Panel Overflow
 
 Tight on panel space? Turn on **Enable overflow** on the Behaviour page to keep
-only the first *N* tray icons inline; the rest collapse under a single overflow
-button at the right of the tray. Click it to get a menu that lists each
-collapsed app, with each app's full menu available inline as a submenu.
+only the first *N* tray icons inline; the rest collapse under a single button
+at the right of the tray. What that button does depends on the mode:
+
+- **Icon menu** (default) - Click the button to get a menu that lists each
+  collapsed app, with each app's full menu available inline as a submenu.
+- **Icon strip** - The button is an arrow. Click it and the collapsed icons
+  slide out in the panel beside it, each opening its own menu as usual. Click
+  the arrow again to tuck them away. If there are more icons than the strip
+  has room for, scroll the mouse wheel over it, or click an icon at its faded
+  edge, to bring the rest into view.
+
+The settings:
 
 - **Enable overflow** - Turn the feature on or off (disabled by default)
-- **Button icon** - Keep the static tray glyph (default), show a
-  dynamic preview of up to 4 hidden icons in colour or in monochrome, or set
+- **Mode** - Icon menu or Icon strip, as above
+- **Button icon** (Icon menu only) - Keep the static tray glyph (default), show
+  a dynamic preview of up to 4 hidden icons in colour or in monochrome, or set
   your own custom icon (a theme icon or an image file)
+- **Strip width** (Icon strip only) - How many icons the strip shows at once
+  (1-20, default 4) before it scrolls. When there are more, half of the next
+  icon peeks out, faded, at the edge. On a crowded panel the strip can shrink
+  to fewer.
 - **Inline icon limit** - Choose how many icons stay directly in the panel
-  (0-20) before the rest overflow. Set it to 0 to keep every tray item in the
-  overflow menu.
+  (0-20, default 0) before the rest overflow. At 0, every tray item goes in the
+  overflow menu or strip.
 
 The static glyph honours the global Icon style setting. The dynamic previews
 set their own colour treatment (colour or monochrome) independently of it; the

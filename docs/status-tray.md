@@ -31,7 +31,7 @@ This document provides comprehensive technical documentation for developers and 
 - **DBusMenu integration**: Full support for dynamic application menus
 - **Dual icon modes**: Symbolic (monochrome) or original (colored) icons
 - **Extensive customization**: Per-app icon overrides, effects, and ordering
-- **Panel overflow**: Optional collapse of excess tray icons into a single overflow button
+- **Panel overflow**: Optional collapse of excess tray icons into a single overflow button's menu, or into a strip that slides out in the panel
 - **Live updates**: All settings changes apply immediately without restart
 
 ### Supported GNOME Versions
@@ -103,6 +103,8 @@ Status Tray/
 │   ├── extension.js          # Main extension code
 │   │   ├── TrayItem          # Individual tray icon component
 │   │   ├── OverflowButton    # Panel overflow button and submenu host
+│   │   ├── IconStripView     # Scrolling, edge-faded strip of tray icons
+│   │   ├── IconStripButton   # Chevron that slides the icon strip out
 │   │   ├── StatusNotifierWatcher  # D-Bus service implementation
 │   │   └── StatusTrayExtension    # Main controller
 │   │
@@ -270,11 +272,13 @@ Main extension controller. Extends `Extension.Extension`.
 | Method | Description |
 |--------|-------------|
 | `enable()` | Start watcher, load settings, create items, register the `toggle-menu` keybinding |
-| `disable()` | Remove the keybinding, destroy all items and the overflow button, stop watcher |
+| `disable()` | Remove the keybinding, destroy all items and the overflow button or icon strip, stop watcher |
 | `_refreshItems()` | Recreate items (after settings change) |
 | `_reorderItems()` | Update panel positions based on app-order |
-| `_applyOverflow()` | Show/hide inline items and (re)build the overflow button |
-| `_keyboardTarget()` | Leftmost visible non-passive item, or the overflow button, for the `toggle-menu` shortcut |
+| `_applyOverflow()` | Show/hide inline items and (re)build the overflow button, or hand over to `_applyIconStrip()` in the `'strip'` mode |
+| `_applyIconStrip()` | Move the overflowed items into the icon strip and lay out the inline items, the chevron and the strip |
+| `_destroyIconStrip()` | Destroy the icon strip, which hands its items back to the panel box first, remembering whether it was open |
+| `_keyboardTarget()` | Leftmost visible non-passive item outside the icon strip, or the strip button or overflow button, for the `toggle-menu` shortcut |
 
 #### Settings Handlers
 
@@ -291,6 +295,10 @@ Main extension controller. Extends `Extension.Extension`.
 'changed::title-aliases'           → _refreshItems() (+ re-resolve each appId)
 'changed::overflow-enabled'        → _applyOverflow()
 'changed::overflow-inline-count'   → _applyOverflow()
+'changed::overflow-icon-style'     → _applyOverflow()
+'changed::overflow-custom-icon'    → _applyOverflow()
+'changed::overflow-mode'           → _applyOverflow()
+'changed::overflow-strip-width'    → _applyOverflow()
 ```
 
 **Note**: `_refreshIcons()` only calls `_updateIcon()` on items that have an
@@ -368,6 +376,68 @@ than the panel top menu. This scopes the "only one submenu open at a time"
 rule locally; without it, opening an app's own submenu (e.g. NordVPN's
 `Settings`) inside an overflow row would trigger the top menu to close the
 outer breadcrumb. See `_addMenuItem` in `extension.js` for details.
+
+---
+
+### IconStripButton and IconStripView (`extension.js`)
+
+The `'strip'` value of `overflow-mode`. `IconStripButton` is a
+`PanelMenu.Button` with no menu, showing a chevron. Clicking it, or pressing
+Return or Space on it, slides an `IconStripView` in and out beside it. Created
+on demand by `StatusTrayExtension._applyIconStrip()` under the same conditions
+as `OverflowButton`, which it replaces.
+
+#### Isolation from the `'menu'` mode
+
+The strip holds the overflowed `TrayItem`s themselves: each one's `container`
+is moved out of the panel box into the strip's `St.BoxLayout`, so it keeps its
+own clicks, menu and keyboard navigation. Only `IconStripButton` moves items
+out of the box, and only `_applyIconStrip()` creates one, so the `'menu'` mode
+never sees an item outside the box. The shared code tolerates strip items in
+two places: `_reorderItems()` gives slots only to containers in the box, and
+`_keyboardTarget()` skips strip items, which stay visible while the strip is
+shut.
+
+Destroying the strip with an item inside would destroy that `TrayItem` too.
+`IconStripButton._onDestroy()` therefore hands every item back to the panel
+box, just before the chevron, whatever destroys the button. `_onDestroy()`
+runs from the button's `destroy` signal, so it covers an external destroy as
+well as `_destroyIconStrip()`. It watches each item's container for `destroy`
+rather than the `TrayItem`: the container goes first, before the extension's
+own `destroy` handler calls `_applyOverflow()`, so the strip never tries to
+hand back a dead container.
+
+#### Layout
+
+- `_applyIconStrip()` lays out the block every time: the items still in the
+  box, then the chevron, then the strip, each placed after the one before
+  with `set_child_above_sibling()`. The chevron is always in the box, so the
+  block has a start even when every item is in the strip.
+- The strip goes to the right of the chevron. In the right box the panel
+  pushes the chevron left as the strip opens, so it points left while shut
+  and right while open. In the left and centre boxes it points the other way.
+- `IconStripView.vfunc_get_preferred_width()` caps the natural width at
+  `overflow-strip-width` slots plus `STRIP_PEEK_FRACTION` (half) of one more,
+  each slot as wide as the widest item. With more items than fit, half of the
+  next one peeks out at the edge, cut off, to show the strip scrolls. The
+  minimum can fall to one slot, so a crowded panel squeezes the strip first.
+- The edge fades come from the `-st-hfade-offset` style, half of
+  `icon-size + icon-padding`, so a fade covers the half item that peeks out.
+  `St.ScrollViewFade` only fades an edge with more content past it.
+- Opening and shutting eases the strip's `width`. Whether it was open
+  survives `_destroyIconStrip()` in `_iconStripExpanded`, for the session.
+
+#### Scrolling
+
+- `vfunc_scroll_event()` maps both scroll axes onto the horizontal adjustment,
+  since `St.ScrollView` scrolls a wheel's vertical steps vertically only.
+- `vfunc_captured_event()` catches a press on an item that is partly hidden
+  or under a fade, and scrolls it into view instead of letting it through.
+- A menu is placed against its source actor at the next layout, so the strip
+  scrolls an item into view at once, without easing, when its menu opens
+  (including by hovering from another menu) or keyboard focus reaches it.
+- `toggleMenuWithKeyFocus()` opens the strip without animating, then the
+  first item's menu, for the `toggle-menu` shortcut.
 
 ---
 
@@ -630,7 +700,7 @@ _activateMenuItem(itemId) {
 | `icon-size` | `i` | `16` | Size in pixels of tray icons shown in the top bar and the overflow button's dynamic preview; range 14-20 |
 | `icon-padding` | `i` | `4` | Gap in pixels between adjacent tray icons; applied as half this value of horizontal padding per side to each tray button and the overflow button; range 0-20 |
 | `click-action` | `s` | `'menu'` | Left-click behaviour: `'menu'` shows the app menu (default), `'activate'` opens the app window (menu on right click), `'activate-double'` opens the window on double click (menu on single click). Right click always shows the menu; middle click triggers `SecondaryActivate` |
-| `toggle-menu` | `as` | `[]` | Keyboard shortcut that opens the leftmost visible tray menu and focuses it, falling back to the overflow button when every item is overflowed; empty means unbound |
+| `toggle-menu` | `as` | `[]` | Keyboard shortcut that opens the leftmost visible tray menu and focuses it, falling back to the overflow button when every item is overflowed (in the icon strip, it opens the strip and its first item's menu); empty means unbound |
 | `app-order` | `as` | `[]` | Custom app ordering |
 | `icon-overrides` | `a{ss}` | `{}` | App ID → icon name/path |
 | `icon-fallback-overrides` | `as` | `[]` | App IDs where override is fallback-only |
@@ -638,9 +708,11 @@ _activateMenuItem(itemId) {
 | `icon-effect-overrides` | `a{ss}` | `{}` | App ID → JSON effect config |
 | `title-aliases` | `a{ss}` | `{}` | Display name → stable app ID (for apps that randomize SNI IDs) |
 | `overflow-enabled` | `b` | `false` | Enable the panel overflow button |
-| `overflow-inline-count` | `i` | `3` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
+| `overflow-inline-count` | `i` | `0` | Inline icon limit before items spill into the overflow menu; `0` keeps every tray item in overflow |
 | `overflow-icon-style` | `s` | `'static'` | `'static'` uses the bundled tray glyph; `'dynamic-original'` previews up to four hidden icons in colour; `'dynamic-symbolic'` previews them in monochrome with a separating outline; `'custom'` uses the icon set in `overflow-custom-icon` |
 | `overflow-custom-icon` | `s` | `''` | Theme icon name or absolute file path for the overflow button when `overflow-icon-style` is `'custom'`; falls back to the bundled glyph when empty or the file is missing |
+| `overflow-mode` | `s` | `'menu'` | `'menu'` lists overflowed items in the overflow button's menu; `'strip'` puts them in a strip that a chevron slides out in the panel |
+| `overflow-strip-width` | `i` | `4` | How many icons the strip shows at once in the `'strip'` mode before it scrolls; range 1-20 |
 | `panel-dark` | `b` | `true` | Internal: whether the top bar is dark, written by the extension from the panel's text colour (see *Light and Dark Panels*) for preferences to read; not meant to be set by hand |
 
 ### Effect Override Format
@@ -714,10 +786,14 @@ StatusTrayPreferences (Adw.PreferencesWindow)
     │   └── Open menu shortcut (Adw.ActionRow) → toggle-menu
     └── Adw.PreferencesGroup ("Overflow")
         ├── Enable overflow (Adw.SwitchRow) → overflow-enabled
+        ├── Mode (Adw.ComboRow: Icon menu / Icon strip) → overflow-mode
         ├── Button icon (Adw.ComboRow) → overflow-icon-style
+        │   (Icon menu only)
         ├── Custom overflow icon (Adw.ActionRow) → overflow-custom-icon
-        │   (visible only when overflow-icon-style is 'custom'; "Choose…"
-        │   opens the icon picker for a theme icon or image file)
+        │   (Icon menu only, and only when overflow-icon-style is 'custom';
+        │   "Choose…" opens the icon picker for a theme icon or image file)
+        ├── Strip width (Adw.SpinRow) → overflow-strip-width
+        │   (Icon strip only)
         └── Inline icon limit (Adw.SpinRow) → overflow-inline-count
 ```
 
@@ -727,8 +803,8 @@ StatusTrayPreferences (Adw.PreferencesWindow)
 `_populateAppsGroup()`, from the number of app rows. `_preferredHeight()` adds
 the header bar, page margins, group header and rows using constants measured on
 libadwaita 1.9 at the default text scale (46, 48, 57, then 54 for the first row
-and 55 for each after). The result is clamped between `MIN_PREFS_HEIGHT` (573,
-the Behaviour page with the custom icon row showing) and 85% of the smallest
+and 55 for each after). The result is clamped between `MIN_PREFS_HEIGHT` (628,
+the Behaviour page in the Icon menu mode with the custom icon row showing) and 85% of the smallest
 monitor. Width is fixed at 640: `AdwPreferencesPage` caps content at 600, and at
 600 or below `AdwPreferencesWindow` moves the page switcher into a bottom bar.
 Rows added later scroll rather than resize the window. If a label change makes a
