@@ -2534,9 +2534,9 @@ class IconStripView extends St.ScrollView {
  *
  * The strip holds the overflowed TrayItems themselves, moved out of the panel
  * box, so each keeps its own clicks and menu. Only this class moves them,
- * which keeps the 'menu' mode clear of it. However the button is destroyed,
- * the icons go back to the panel first: destroying the strip with an icon
- * still inside would destroy that TrayItem too.
+ * which keeps the 'menu' mode clear of it. destroy() puts the icons back in
+ * the panel first: destroying the strip with an icon still inside would
+ * destroy that TrayItem too.
  */
 const IconStripButton = GObject.registerClass(
 class IconStripButton extends PanelMenu.Button {
@@ -2681,8 +2681,7 @@ class IconStripButton extends PanelMenu.Button {
         trayItem.menu.disconnectObject(this);
 
         this._view.child.remove_child(container);
-        // No box when the button goes down with it, at shell shutdown.
-        this.container.get_parent()?.insert_child_below(container, this.container);
+        this.container.get_parent().insert_child_below(container, this.container);
     }
 
     _syncIcon() {
@@ -2700,13 +2699,13 @@ class IconStripButton extends PanelMenu.Button {
         this._view.queue_relayout();
     }
 
-    _onDestroy() {
+    destroy() {
         global.stage.disconnectObject(this);
         for (const trayItem of this._items)
             this._release(trayItem);
         this._items = [];
         this._view.destroy();
-        super._onDestroy();
+        super.destroy();
     }
 });
 

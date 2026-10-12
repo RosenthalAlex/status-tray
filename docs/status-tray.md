@@ -399,13 +399,12 @@ two places: `_reorderItems()` gives slots only to containers in the box, and
 shut.
 
 Destroying the strip with an item inside would destroy that `TrayItem` too.
-`IconStripButton._onDestroy()` therefore hands every item back to the panel
-box, just before the chevron, whatever destroys the button. `_onDestroy()`
-runs from the button's `destroy` signal, so it covers an external destroy as
-well as `_destroyIconStrip()`. It watches each item's container for `destroy`
-rather than the `TrayItem`: the container goes first, before the extension's
-own `destroy` handler calls `_applyOverflow()`, so the strip never tries to
-hand back a dead container.
+`IconStripButton.destroy()` therefore hands every item back to the panel box,
+just before the chevron, then calls `super.destroy()`. Only
+`_destroyIconStrip()` destroys the button. The button watches each item's
+container for `destroy` rather than the `TrayItem`: the container goes first,
+before the extension's own `destroy` handler calls `_applyOverflow()`, so the
+strip never tries to hand back a dead container.
 
 #### Layout
 
