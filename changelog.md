@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.4] - 2026-10-12
 
 ### Added
 - A second overflow mode, Icon strip. Instead of a menu, the overflow button becomes an arrow that slides the extra tray icons out in the panel beside it, and tucks them away again. Each icon opens its own menu as usual. If there are more icons than fit, half of the next one peeks out at the strip's edge, and the strip scrolls, with the mouse wheel or by clicking that half icon. Choose it under Overflow on the Behaviour page, where Strip width sets how many icons it shows at once. The original menu, now called Icon menu, is still the default. Thanks to [@kusaida](https://github.com/kusaida) for the idea and the mockup (#34).
