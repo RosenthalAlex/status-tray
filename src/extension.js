@@ -3941,6 +3941,12 @@ export default class StatusTrayExtension extends Extension {
                 this._settings, this._panelBoxName(), this._iconStripExpanded);
             const areaKey = this._freeStatusAreaKey('StatusTray-Strip');
             Main.panel.addToStatusArea(areaKey, this._iconStrip, slotAfterManagedItems(), this._panelBoxName());
+            // The panel registers the chevron's placeholder menu with its menu
+            // manager. On GNOME 50 the manager then watches the chevron's
+            // events for good, and a click on the chevron leaves the strip's
+            // menus opening on hover. The placeholder never shows anything,
+            // so take it out.
+            Main.panel.menuManager.removeMenu(this._iconStrip.menu);
             box.insert_child_above(this._iconStrip.view, this._iconStrip.container);
         }
 

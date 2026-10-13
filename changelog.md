@@ -4,6 +4,11 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- On GNOME 50, the Icon strip's menus open on click again. Clicking the strip's arrow used to leave every icon's menu opening as soon as the pointer passed over it. On any GNOME version, moving the pointer across the arrow while a menu is open no longer leaves every panel menu opening on hover either.
+
 ## [2.4] - 2026-10-12
 
 ### Added

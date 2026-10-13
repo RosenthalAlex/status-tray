@@ -406,6 +406,16 @@ container for `destroy` rather than the `TrayItem`: the container goes first,
 before the extension's own `destroy` handler calls `_applyOverflow()`, so the
 strip never tries to hand back a dead container.
 
+`addToStatusArea()` registers the chevron's `PopupDummyMenu` with
+`Main.panel.menuManager`, as for any panel button. `_applyIconStrip()` removes
+it again at once. GNOME 50's menu manager connects `captured-event` on every
+registered menu's actor, which for a dummy menu is the button itself, and its
+handler opens the menu of whatever panel button the pointer enters. Left
+registered, the chevron would have the strip's menus opening on hover as soon
+as it is clicked. On any version, hovering the chevron while a menu is open
+would also switch to the dummy, which shows nothing but keeps the grab, so
+every panel menu would then open on hover.
+
 #### Layout
 
 - `_applyIconStrip()` lays out the block every time: the items still in the
