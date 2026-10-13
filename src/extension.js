@@ -353,7 +353,10 @@ const TrayItem = GObject.registerClass({
 
         this._tempFilePath = null;
         this._fallbackOverrideIcon = null;
-        this._isPassive = false;
+        // Hidden like a Passive item until the app first answers a property
+        // read, so one that never does doesn't sit in the panel showing only
+        // the placeholder icon.
+        this._isPassive = true;
         // Host location of a Flatpak app's /app; see _resolveFlatpakAppPath.
         this._flatpakAppPath = null;
 
@@ -530,12 +533,19 @@ const TrayItem = GObject.registerClass({
 
         this._updateIcon();
 
+        // An unanswered GetAll doesn't fail the proxy's init, it only leaves
+        // the property cache empty. Ask for Status on its own instead.
+        if (!this._proxy.get_cached_property_names()?.length) {
+            this._fetchStatusDirect();
+            return;
+        }
+
         // Per SNI spec, Passive items should not be shown. Some apps (Ubuntu's
         // update-notifier in particular) sit at Passive between events and
         // expect the host to hide them until they go Active/NeedsAttention.
-        const statusVariant = this._proxy.get_cached_property('Status');
-        if (statusVariant)
-            this._applyStatus(statusVariant.deep_unpack());
+        // An app that answered but has no Status is shown.
+        const status = this._proxy.get_cached_property('Status')?.deep_unpack();
+        this._applyStatus(status ?? 'Active');
     }
 
     _computeDisplayName() {
@@ -979,6 +989,7 @@ const TrayItem = GObject.registerClass({
         this._fetchIdDirect();
         this._fetchIconDirect();
         this._fetchMenuPathDirect();
+        this._fetchStatusDirect();
         this._subscribeToSignals();
     }
 
@@ -1137,6 +1148,33 @@ const TrayItem = GObject.registerClass({
                         debug(`Failed to get Menu path: ${e}`);
                     }
                     this._menuPath = '/MenuBar';
+                }
+            }
+        );
+    }
+
+    // On failure the item stays hidden; see _isPassive in _init.
+    _fetchStatusDirect() {
+        const bus = Gio.DBus.session;
+
+        bus.call(
+            this._busName,
+            this._objectPath,
+            'org.freedesktop.DBus.Properties',
+            'Get',
+            new GLib.Variant('(ss)', ['org.kde.StatusNotifierItem', 'Status']),
+            new GLib.VariantType('(v)'),
+            Gio.DBusCallFlags.NONE,
+            -1,
+            this._cancellable,
+            (conn, result) => {
+                try {
+                    const reply = conn.call_finish(result);
+                    const [variant] = reply.deep_unpack();
+                    this._applyStatus(variant.deep_unpack());
+                } catch (e) {
+                    if (!e.message?.includes('CANCELLED'))
+                        debug(`Failed to get Status: ${e.message}`);
                 }
             }
         );
@@ -3508,6 +3546,9 @@ export default class StatusTrayExtension extends Extension {
         const boxName = this._panelBoxName();
         const slot = this._managedBase(box) + position;
         Main.panel.addToStatusArea(areaKey, trayItem, slot, boxName);
+        // addToStatusArea shows the container, but a new item starts hidden;
+        // see _isPassive in TrayItem._init.
+        trayItem.container.hide();
         debug(`Added TrayItem: ${uniqueId} as ${areaKey} at slot ${slot} (${boxName} box)`);
         this._scheduleReorder();
         this._applyOverflow();
