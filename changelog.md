@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 - A tray icon made of three dots, whose menu only says Loading..., no longer shows up for a while when Status Tray starts. Status Tray used to put each new icon in the panel before its app had answered, so an app that was slow to answer, or never did, appeared as three dots until it was cleared away. Icons now stay hidden until their app answers. An app that answers without giving an icon still shows the three dots. Thanks to [@adavidys](https://github.com/adavidys) for the report (#35).
+- The first click on a tray icon now shows the app's menu straight away. Status Tray used to fetch a menu only when you first opened it, so that first click showed Loading... until the app answered, which took some apps several seconds. A new icon now appears once its menu has loaded, and later clicks refresh the menu in the background as before. Thanks to [@adavidys](https://github.com/adavidys) for the report (#37).
 
 ## [2.5] - 2026-10-13
 

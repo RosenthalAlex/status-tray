@@ -354,9 +354,12 @@ const TrayItem = GObject.registerClass({
         this._tempFilePath = null;
         this._fallbackOverrideIcon = null;
         // Hidden like a Passive item until the app first answers a property
-        // read, so one that never does doesn't sit in the panel showing only
-        // the placeholder icon.
+        // read and, if it has a menu, that menu has loaded once. The panel
+        // then never shows an item with only the placeholder icon, or one
+        // whose first click only gets the placeholder menu.
         this._isPassive = true;
+        this._status = null;
+        this._menuLoading = false;
         // Host location of a Flatpak app's /app; see _resolveFlatpakAppPath.
         this._flatpakAppPath = null;
 
@@ -522,6 +525,8 @@ const TrayItem = GObject.registerClass({
         if (menuPath) {
             this._menuPath = menuPath.deep_unpack();
             debug(`Got Menu path from proxy: ${this._menuPath}`);
+            this._menuLoading = true;
+            this._fetchMenuLayout(this.menu, true);
         }
 
         // Resolve app ID using priority order:
@@ -1181,7 +1186,13 @@ const TrayItem = GObject.registerClass({
     }
 
     _applyStatus(status) {
-        const passive = status === 'Passive';
+        this._status = status;
+        this._updatePassive();
+    }
+
+    _updatePassive() {
+        const passive = this._status === null || this._status === 'Passive' ||
+            this._menuLoading;
         if (passive === this._isPassive)
             return;
         this._isPassive = passive;
@@ -1616,7 +1627,9 @@ const TrayItem = GObject.registerClass({
         );
     }
 
-    _fetchMenuLayout(targetMenu = this.menu) {
+    // preload is the load the item waits on before it first shows. It skips
+    // AboutToShow, since nothing is being shown yet.
+    _fetchMenuLayout(targetMenu = this.menu, preload = false) {
         debug(`_fetchMenuLayout called for ${this._busName}`);
         const bus = Gio.DBus.session;
 
@@ -1634,20 +1647,33 @@ const TrayItem = GObject.registerClass({
             new GLib.VariantType('(u(ia{sv}av))'),
             Gio.DBusCallFlags.NONE,
             -1,
-            null,
+            this._cancellable,
             (conn, result) => {
                 try {
                     const reply = conn.call_finish(result);
                     const [revision, layout] = reply.deep_unpack();
                     debug(`Got menu layout, revision ${revision}`);
-                    targetMenu.removeAll();
-                    this._buildMenuFromLayout(layout, targetMenu);
+                    // Some apps fill their menu only on AboutToShow. GNOME
+                    // won't open an empty menu, so a preload that finds no
+                    // items keeps the placeholder for the first open to replace.
+                    const [, , children] = layout;
+                    if (!preload || children.length > 0) {
+                        targetMenu.removeAll();
+                        this._buildMenuFromLayout(layout, targetMenu);
+                    }
                     if (this._focusOnOpen && targetMenu === this.menu) {
                         this._focusOnOpen = false;
                         this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
                     }
                 } catch (e) {
                     debug(`Failed to get menu layout: ${e}`);
+                }
+
+                // The item shows whether or not its menu loaded, unless
+                // destroy() has run, which also clears the cancellable.
+                if (preload && this._cancellable) {
+                    this._menuLoading = false;
+                    this._updatePassive();
                 }
             }
         );
