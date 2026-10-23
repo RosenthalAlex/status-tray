@@ -72,6 +72,13 @@ function debug(msg) {
     }
 }
 
+// True when a call failed because its owner's teardown cancelled it. The
+// callback should then do nothing more, since what it would touch is gone.
+function isCancelled(e) {
+    return e instanceof GLib.Error &&
+        e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
+}
+
 // SNI D-Bus interface XML — helps Gio.DBusProxy handle broken implementations
 const SNI_INTERFACE_XML = `
 <node>
@@ -492,6 +499,11 @@ const TrayItem = GObject.registerClass({
             this._subscribeToSignals();
 
         } catch (e) {
+            // destroy() cancels an init that is still waiting on the app.
+            // Falling back then would subscribe the dead item to the app's
+            // signals, after destroy() has already unsubscribed it.
+            if (isCancelled(e))
+                return;
             debug(`Failed to initialize proxy for ${this._busName}: ${e.message}`);
             this._connectToSNIFallback();
         }
@@ -780,11 +792,11 @@ const TrayItem = GObject.registerClass({
                         debug(`Got IconThemePath (direct): ${this._iconThemePath}`);
                     }
                 } catch (e) {
+                    if (isCancelled(e))
+                        return;
                     // IconThemePath is optional
-                    if (!e.message?.includes('No such property') &&
-                        !e.message?.includes('CANCELLED')) {
+                    if (!e.message.includes('No such property'))
                         debug(`IconThemePath fetch issue: ${e.message}`);
-                    }
                 }
 
                 this._fetchIconNameDirect();
@@ -822,9 +834,9 @@ const TrayItem = GObject.registerClass({
                         this._fetchIconPixmapDirect();
                     }
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
-                        debug(`Failed to get IconName: ${e}`);
-                    }
+                    if (isCancelled(e))
+                        return;
+                    debug(`Failed to get IconName: ${e}`);
                     if (this._fallbackOverrideIcon) {
                         this._setIcon(this._fallbackOverrideIcon, false);
                     } else {
@@ -854,9 +866,8 @@ const TrayItem = GObject.registerClass({
                     const [variant] = reply.deep_unpack();
                     this._setIconFromPixmap(variant);
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
+                    if (!isCancelled(e))
                         debug(`Failed to get IconPixmap: ${e}`);
-                    }
                 }
             }
         );
@@ -914,11 +925,11 @@ const TrayItem = GObject.registerClass({
                     debug(`No usable IconPixmap, falling back for: ${iconName}`);
                     this._setIconFromThemeFile(iconName, skipThemeSearch);
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
-                        debug(`IconPixmap fetch failed: ${e.message}`);
-                        debug(`Falling back for: ${iconName}`);
-                        this._setIconFromThemeFile(iconName, skipThemeSearch);
-                    }
+                    if (isCancelled(e))
+                        return;
+                    debug(`IconPixmap fetch failed: ${e.message}`);
+                    debug(`Falling back for: ${iconName}`);
+                    this._setIconFromThemeFile(iconName, skipThemeSearch);
                 }
             }
         );
@@ -1037,9 +1048,9 @@ const TrayItem = GObject.registerClass({
                         return; // ToolTip found, no need to try other sources
                     }
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
-                        debug(`Failed to get ToolTip (fallback): ${e.message}`);
-                    }
+                    if (isCancelled(e))
+                        return;
+                    debug(`Failed to get ToolTip (fallback): ${e.message}`);
                 }
                 // ToolTip not available, try IconThemePath for Flatpak ID
                 this._fetchIdFromIconThemePathDirect();
@@ -1078,9 +1089,9 @@ const TrayItem = GObject.registerClass({
                         }
                     }
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
-                        debug(`Failed to get IconThemePath (fallback): ${e.message}`);
-                    }
+                    if (isCancelled(e))
+                        return;
+                    debug(`Failed to get IconThemePath (fallback): ${e.message}`);
                 }
                 // No Flatpak ID, try SNI Id as last resort
                 this._fetchSniIdDirect();
@@ -1114,9 +1125,8 @@ const TrayItem = GObject.registerClass({
                         this._applyOverrideForResolvedAppId();
                     }
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
+                    if (!isCancelled(e))
                         debug(`Failed to get SNI Id: ${e.message}`);
-                    }
                 }
             }
         );
@@ -1149,9 +1159,9 @@ const TrayItem = GObject.registerClass({
 
                     debug(`Got Menu path (direct): ${this._menuPath}`);
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED')) {
-                        debug(`Failed to get Menu path: ${e}`);
-                    }
+                    if (isCancelled(e))
+                        return;
+                    debug(`Failed to get Menu path: ${e}`);
                     this._menuPath = '/MenuBar';
                 }
             }
@@ -1178,7 +1188,7 @@ const TrayItem = GObject.registerClass({
                     const [variant] = reply.deep_unpack();
                     this._applyStatus(variant.deep_unpack());
                 } catch (e) {
-                    if (!e.message?.includes('CANCELLED'))
+                    if (!isCancelled(e))
                         debug(`Failed to get Status: ${e.message}`);
                 }
             }
@@ -2827,11 +2837,6 @@ class StatusNotifierWatcher {
         });
     }
 
-    _isCancelled(e) {
-        return e instanceof GLib.Error &&
-            e.matches(Gio.IOErrorEnum, Gio.IOErrorEnum.CANCELLED);
-    }
-
     _busCall(name, objectPath, iface, method, params, replyType, timeoutMs) {
         return new Promise((resolve, reject) => {
             Gio.DBus.session.call(
@@ -2903,7 +2908,7 @@ class StatusNotifierWatcher {
             if (failed > 0)
                 debug(`Sweep finished with ${failed} connection(s) erroring out`);
         } catch (e) {
-            if (!this._isCancelled(e))
+            if (!isCancelled(e))
                 debug(`Error seeking existing items: ${e.message}`);
         }
     }
