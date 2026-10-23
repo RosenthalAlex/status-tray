@@ -427,6 +427,12 @@ const TrayItem = GObject.registerClass({
     }
 
     async _initProxy() {
+        // Subscribe before the proxy reads the app's properties. GDBus matches
+        // a signal to subscribers as it arrives, so subscribing once the read
+        // was handled lost any NewIcon the app sent in between, and the item
+        // kept its old icon until the app changed it again (#39).
+        this._subscribeToSignals();
+
         try {
             this._proxy = new Gio.DBusProxy({
                 g_connection: Gio.DBus.session,
@@ -496,12 +502,11 @@ const TrayItem = GObject.registerClass({
             });
 
             this._fetchPropertiesFromProxy();
-            this._subscribeToSignals();
 
         } catch (e) {
             // destroy() cancels an init that is still waiting on the app.
-            // Falling back then would subscribe the dead item to the app's
-            // signals, after destroy() has already unsubscribed it.
+            // Falling back then would start reads on the dead item that no
+            // cancellable can stop, since destroy() has already dropped it.
             if (isCancelled(e))
                 return;
             debug(`Failed to initialize proxy for ${this._busName}: ${e.message}`);
@@ -978,6 +983,14 @@ const TrayItem = GObject.registerClass({
             (conn, sender, path, iface, signal, params) => {
                 const [status] = params.deep_unpack();
                 debug(`NewStatus signal for ${this._busName}: ${status}`);
+                // Until the first status read lands, applying this could show
+                // the item ahead of its icon and menu, and that read could
+                // then replace it with an older answer. Asking again puts the
+                // newest answer last.
+                if (this._status === null) {
+                    this._fetchStatusDirect();
+                    return;
+                }
                 this._applyStatus(status);
             }
         );
@@ -1006,7 +1019,6 @@ const TrayItem = GObject.registerClass({
         this._fetchIconDirect();
         this._fetchMenuPathDirect();
         this._fetchStatusDirect();
-        this._subscribeToSignals();
     }
 
     // The no-proxy fallback path resolves the appId only after the icon
