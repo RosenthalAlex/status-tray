@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.7] - 2026-10-23
 
 ### Fixed
 - Status Tray no longer fills the system log with "has been already disposed" warnings. When a tray icon was removed while Status Tray was still waiting for its app to answer, the removed icon could stay subscribed to its app. Each time the app later changed its icon, the removed one tried to redraw itself and logged two warnings, which over a few days grew the log to several gigabytes. Thanks to [@sojusnik](https://github.com/sojusnik) for the report (#38).
