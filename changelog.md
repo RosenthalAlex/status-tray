@@ -8,6 +8,7 @@ Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 - An app that changes its tray icon just after it starts, such as a VPN or proxy client going from its disconnected icon to its connected one, no longer sometimes keeps its first icon after login. Status Tray only started listening for icon changes once it had read the app's first icon, so a change that came in between was missed, and the old icon stayed until the app changed it again. It was most likely at login, when the shell is at its busiest and that gap at its longest. Thanks to [@hopsayer](https://github.com/hopsayer) for the report (#39).
+- A tray icon no longer goes back to an icon its app has since replaced, for example when you remove an icon override for that app. Status Tray redrew the icon from the details it had read when the app started, and most apps' later icon changes never reached that copy.
 
 ## [2.7] - 2026-10-23
 

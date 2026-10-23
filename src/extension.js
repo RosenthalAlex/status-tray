@@ -827,6 +827,7 @@ const TrayItem = GObject.registerClass({
                     const reply = conn.call_finish(result);
                     const [variant] = reply.deep_unpack();
                     const iconName = variant.deep_unpack();
+                    this._cacheIconProperty('IconName', variant);
 
                     if (iconName && iconName.length > 0) {
                         debug(`Got IconName (direct): ${iconName}`);
@@ -869,6 +870,7 @@ const TrayItem = GObject.registerClass({
                 try {
                     const reply = conn.call_finish(result);
                     const [variant] = reply.deep_unpack();
+                    this._cacheIconProperty('IconPixmap', variant);
                     this._setIconFromPixmap(variant);
                 } catch (e) {
                     if (!isCancelled(e))
@@ -876,6 +878,18 @@ const TrayItem = GObject.registerClass({
                 }
             }
         );
+    }
+
+    // The proxy's cache only follows PropertiesChanged, while apps announce
+    // a new icon with NewIcon and leave it to be read again. Store what that
+    // read returned, or the next _updateIcon draws the old icon from the
+    // cache, as it does when an override is removed.
+    _cacheIconProperty(name, variant) {
+        // set_cached_property refuses a value of the wrong type with a
+        // warning, and some apps answer IconPixmap with an empty string.
+        const { signature } = getSNIInterfaceInfo().lookup_property(name);
+        if (variant.get_type_string() === signature)
+            this._proxy?.set_cached_property(name, variant);
     }
 
     // Render the app-supplied IconPixmap, falling back to iconName if there
@@ -923,6 +937,7 @@ const TrayItem = GObject.registerClass({
                 try {
                     const reply = conn.call_finish(result);
                     const [variant] = reply.deep_unpack();
+                    this._cacheIconProperty('IconPixmap', variant);
 
                     if (this._setIconFromPixmap(variant))
                         return;
