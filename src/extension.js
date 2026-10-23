@@ -1623,12 +1623,14 @@ const TrayItem = GObject.registerClass({
             new GLib.VariantType('(b)'),
             Gio.DBusCallFlags.NONE,
             -1,
-            null,
+            this._cancellable,
             (conn, result) => {
                 try {
                     conn.call_finish(result);
                     debug(`AboutToShow succeeded for ${this._busName}`);
                 } catch (e) {
+                    if (isCancelled(e))
+                        return;
                     debug(`AboutToShow failed (may be ok): ${e}`);
                 }
 
