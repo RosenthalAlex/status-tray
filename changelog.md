@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.8] - 2026-10-24
 
 ### Fixed
 - An app that changes its tray icon just after it starts, such as a VPN or proxy client going from its disconnected icon to its connected one, no longer sometimes keeps its first icon after login. Status Tray only started listening for icon changes once it had read the app's first icon, so a change that came in between was missed, and the old icon stayed until the app changed it again. It was most likely at login, when the shell is at its busiest and that gap at its longest. Thanks to [@hopsayer](https://github.com/hopsayer) for the report (#39).
