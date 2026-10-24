@@ -428,9 +428,9 @@ const TrayItem = GObject.registerClass({
 
     async _initProxy() {
         // Subscribe before the proxy reads the app's properties. GDBus matches
-        // a signal to subscribers as it arrives, so subscribing once the read
-        // was handled lost any NewIcon the app sent in between, and the item
-        // kept its old icon until the app changed it again (#39).
+        // a signal to subscribers as it arrives, so subscribing after the read
+        // would miss a NewIcon sent in between, and the item would keep its
+        // old icon until the app changed it again (#39).
         this._subscribeToSignals();
 
         try {
