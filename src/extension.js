@@ -1696,9 +1696,18 @@ const TrayItem = GObject.registerClass({
                     // won't open an empty menu, so a preload that finds no
                     // items keeps the placeholder for the first open to replace.
                     const [, , children] = layout;
-                    if (!preload || children.length > 0) {
+                    // Rebuilding an unchanged menu while it is open makes it
+                    // flash and resize, which is what hovering from icon to
+                    // icon mostly does. Skip the rebuild when the layout is
+                    // identical to the one the menu was last built from.
+                    const layoutVariant = reply.get_child_value(1);
+                    const unchanged = targetMenu._statusTrayLayout?.equal(layoutVariant);
+                    if (unchanged) {
+                        debug(`Menu layout unchanged for ${this._busName}, keeping items`);
+                    } else if (!preload || children.length > 0) {
                         targetMenu.removeAll();
                         this._buildMenuFromLayout(layout, targetMenu);
+                        targetMenu._statusTrayLayout = layoutVariant;
                     }
                     if (this._focusOnOpen && targetMenu === this.menu) {
                         this._focusOnOpen = false;
