@@ -1696,15 +1696,29 @@ const TrayItem = GObject.registerClass({
                     // won't open an empty menu, so a preload that finds no
                     // items keeps the placeholder for the first open to replace.
                     const [, , children] = layout;
-                    if (!preload || children.length > 0) {
+                    // Rebuilding an unchanged menu while it is open makes it
+                    // flash and resize, which is what hovering from icon to
+                    // icon mostly does. Skip the rebuild when the layout is
+                    // identical to the one the menu was last built from.
+                    const layoutVariant = reply.get_child_value(1);
+                    const unchanged = targetMenu._statusTrayLayout?.equal(layoutVariant);
+                    if (unchanged) {
+                        debug(`Menu layout unchanged for ${this._busName}, keeping items`);
+                    } else if (!preload || children.length > 0) {
                         targetMenu.removeAll();
                         this._buildMenuFromLayout(layout, targetMenu);
+                        targetMenu._statusTrayLayout = layoutVariant;
                     }
                     if (this._focusOnOpen && targetMenu === this.menu) {
                         this._focusOnOpen = false;
-                        this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
+                        // Kept items still have the focus toggleMenuWithKeyFocus
+                        // gave them, which the user may have moved on since.
+                        if (!unchanged)
+                            this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
                     }
                 } catch (e) {
+                    // A build that threw may have left the menu half built.
+                    targetMenu._statusTrayLayout = null;
                     debug(`Failed to get menu layout: ${e}`);
                 }
 
@@ -2010,10 +2024,11 @@ const TrayItem = GObject.registerClass({
     }
 
     toggleMenuWithKeyFocus() {
-        // The DBusMenu round-trip in _loadMenu replaces every item, destroying
-        // whatever is focused here; _fetchMenuLayout focuses again once the
-        // real layout arrives. Focusing now still matters: it puts focus on the
-        // placeholder so Escape and Left/Right work during the round-trip.
+        // If the layout has changed, the DBusMenu round-trip in _loadMenu
+        // replaces every item, destroying whatever is focused here, and
+        // _fetchMenuLayout focuses again. Focusing now still matters: Escape
+        // and Left/Right work during the round-trip, and a menu whose layout
+        // has not changed keeps this focus.
         this._focusOnOpen = !this.menu.isOpen;
         this.menu.toggle();
         if (this.menu.isOpen)
@@ -2390,6 +2405,9 @@ class OverflowButton extends PanelMenu.Button {
 
     _seedPlaceholder(menu) {
         menu.removeAll();
+        // The items _loadMenu built are gone, so its next load must build
+        // them again even if the layout has not changed.
+        menu._statusTrayLayout = null;
         menu.addMenuItem(new PopupMenu.PopupMenuItem('Loading...', {
             reactive: false,
             style_class: 'popup-inactive-menu-item',
