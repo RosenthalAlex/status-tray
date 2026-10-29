@@ -4,7 +4,7 @@ All notable changes to Status Tray will be documented in this file.
 
 Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [2.9] - 2026-10-29
 
 ### Fixed
 - Moving the pointer from one tray icon to the next while a menu is open no longer makes the new menu flash and resize. Status Tray rebuilt an icon's whole menu each time it opened, even when the app sent back exactly the same menu, so the menu first showed its old items and then redrew itself once the app answered. A menu is now only rebuilt when its contents have changed. Thanks to [@RosenthalAlex](https://github.com/RosenthalAlex) for the fix (#40).
