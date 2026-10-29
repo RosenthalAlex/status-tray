@@ -1711,7 +1711,10 @@ const TrayItem = GObject.registerClass({
                     }
                     if (this._focusOnOpen && targetMenu === this.menu) {
                         this._focusOnOpen = false;
-                        this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
+                        // Kept items still have the focus toggleMenuWithKeyFocus
+                        // gave them, which the user may have moved on since.
+                        if (!unchanged)
+                            this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
                     }
                 } catch (e) {
                     // A build that threw may have left the menu half built.
@@ -2021,10 +2024,11 @@ const TrayItem = GObject.registerClass({
     }
 
     toggleMenuWithKeyFocus() {
-        // The DBusMenu round-trip in _loadMenu replaces every item, destroying
-        // whatever is focused here; _fetchMenuLayout focuses again once the
-        // real layout arrives. Focusing now still matters: it puts focus on the
-        // placeholder so Escape and Left/Right work during the round-trip.
+        // If the layout has changed, the DBusMenu round-trip in _loadMenu
+        // replaces every item, destroying whatever is focused here, and
+        // _fetchMenuLayout focuses again. Focusing now still matters: Escape
+        // and Left/Right work during the round-trip, and a menu whose layout
+        // has not changed keeps this focus.
         this._focusOnOpen = !this.menu.isOpen;
         this.menu.toggle();
         if (this.menu.isOpen)
