@@ -1714,6 +1714,8 @@ const TrayItem = GObject.registerClass({
                         this.menu.actor.navigate_focus(null, St.DirectionType.TAB_FORWARD, false);
                     }
                 } catch (e) {
+                    // A build that threw may have left the menu half built.
+                    targetMenu._statusTrayLayout = null;
                     debug(`Failed to get menu layout: ${e}`);
                 }
 
@@ -2399,6 +2401,9 @@ class OverflowButton extends PanelMenu.Button {
 
     _seedPlaceholder(menu) {
         menu.removeAll();
+        // The items _loadMenu built are gone, so its next load must build
+        // them again even if the layout has not changed.
+        menu._statusTrayLayout = null;
         menu.addMenuItem(new PopupMenu.PopupMenuItem('Loading...', {
             reactive: false,
             style_class: 'popup-inactive-menu-item',
